@@ -1,96 +1,132 @@
-const router = require('express').Router();
-const { Product, Category, Tag, ProductTag } = require('../../models');
-
-// The `/api/products` endpoint
-
-// get all products
-router.get('/', (req, res) => {
-  // find all products
-  // be sure to include its associated Category and Tag data
+// Product Routes //
+// Dependencies
+const router = require("express").Router();
+const { Product, Category, Tag, ProductTag } = require("../../models");
+// GET
+// Get all Proeducts
+router.get("/", async (req, res) => {
+  try {
+    const allProduct = await Product.findAll({ include: [Category, Tag] });
+    res.status(200).json(allProduct);
+  } catch (e) {
+    res.status(400).json(e);
+  }
 });
-
-// get one product
-router.get('/:id', (req, res) => {
-  // find a single product by its `id`
-  // be sure to include its associated Category and Tag data
-});
-
-// create new product
-router.post('/', (req, res) => {
-  /* req.body should look like this...
-    {
-      product_name: "Basketball",
-      price: 200.00,
-      stock: 3,
-      tagIds: [1, 2, 3, 4]
+// GET
+// Get one Product by id
+router.get("/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const productById = await Product.findOne({
+      where: { id },
+      include: [Category, Tag],
+    });
+    if(!productById) {
+      return res.status(400).json({ error: `issue getting product ${id} by ID` });
     }
-  */
-  Product.create(req.body)
-    .then((product) => {
-      // if there's product tags, we need to create pairings to bulk create in the ProductTag model
-      if (req.body.tagIds.length) {
-        const productTagIdArr = req.body.tagIds.map((tag_id) => {
+    res.status(200).json(productById);
+  } catch (e) {
+    res.status(400).json(e);
+  }
+});
+// POST
+// Create product
+router.post("/", async (req, res) => {
+  try {
+    // const product = await Product.create({
+    //   product_name: req.body.product_name,
+    //   price: req.body.price,
+    //   stock: req.body.stock,
+    //   tagIds: req.body.tagIds,
+    //   include: [Category, Tag]
+    // });
+    // if(req.body.tagIds.length) {
+    //   const productTagIdArray = req.body.tagIds.map((tag_id) => {
+    //     return {
+    //       product_id: product.id,
+    //       tag_id,
+    //     };
+    //   });
+    //   const tagId = await ProductTag.bulkCreate(productTagIdArray);
+    // }
+    // res.status(200).json(product);
+
+    // Capture Inputs
+    const {product_name, price, stock, category_id, tagIds} = req.body;
+
+    const newProduct = await Product.create({
+      product_name,
+      price,
+      stock,
+      category_id
+    });
+    if(tagIds.length) {
+        const productTagIdArray = tagIds.map((tag_id) => {
           return {
-            product_id: product.id,
+            product_id: newProduct.id,
             tag_id,
           };
         });
-        return ProductTag.bulkCreate(productTagIdArr);
-      }
-      // if no product tags, just respond
-      res.status(200).json(product);
-    })
-    .then((productTagIds) => res.status(200).json(productTagIds))
-    .catch((err) => {
-      console.log(err);
-      res.status(400).json(err);
+        await ProductTag.bulkCreate(productTagIdArray);
+      };
+    res.json(newProduct);
+  } catch (e) {
+    console.log(e);
+    res.status(400).json(e);
+  }
+});
+// PUT
+// Updates product data
+router.put("/:id", async (req, res) => {
+  try {
+    
+    // The Updated Product 
+    const updatedProduct = await Product.update(req.body, {where: {id: req.params.id}});
+    // Not Found 
+    if(!updatedProduct) return res.status(404).json("Not Found");
+
+    // FeedBack == not updated
+    if(!updatedProduct[0]) return res.status(400).json("Invalid Inputs");
+
+    // The New Prodct
+    const newProduct = await Product.findOne({where: {id: req.params.id}});
+
+    // handle Tags
+    if(req.body.tagIds.length) {
+      await ProductTag.destroy({
+        where: {product_id: req.params.id}
+      })
+      const productTagIdArray = req.body.tagIds.map((tag_id) => {
+        return {
+          product_id: newProduct.id,
+          tag_id,
+        };
+      });
+      await ProductTag.bulkCreate(productTagIdArray);
+    };
+
+    res.json(newProduct);
+  } catch (error) {
+    return res.status(500).json(error.message);
+  }
+});
+// DELETE
+// Delete one product by id
+router.delete("/:id", async (req, res) => {
+  try {
+    const productData = Product.destroy({
+      where: {
+        id: req.params.id,
+      },
     });
+    if(!productData) {
+      res.status(404).json({ message: "Product not found to delete" });
+      return;
+    }
+    res.json(productData);
+  } catch (e) {
+    console.log(e);
+    res.status(400).json(e);
+  }
 });
-
-// update product
-router.put('/:id', (req, res) => {
-  // update product data
-  Product.update(req.body, {
-    where: {
-      id: req.params.id,
-    },
-  })
-    .then((product) => {
-      // find all associated tags from ProductTag
-      return ProductTag.findAll({ where: { product_id: req.params.id } });
-    })
-    .then((productTags) => {
-      // get list of current tag_ids
-      const productTagIds = productTags.map(({ tag_id }) => tag_id);
-      // create filtered list of new tag_ids
-      const newProductTags = req.body.tagIds
-        .filter((tag_id) => !productTagIds.includes(tag_id))
-        .map((tag_id) => {
-          return {
-            product_id: req.params.id,
-            tag_id,
-          };
-        });
-      // figure out which ones to remove
-      const productTagsToRemove = productTags
-        .filter(({ tag_id }) => !req.body.tagIds.includes(tag_id))
-        .map(({ id }) => id);
-
-      // run both actions
-      return Promise.all([
-        ProductTag.destroy({ where: { id: productTagsToRemove } }),
-        ProductTag.bulkCreate(newProductTags),
-      ]);
-    })
-    .then((updatedProductTags) => res.json(updatedProductTags))
-    .catch((err) => {
-      // console.log(err);
-      res.status(400).json(err);
-    });
-});
-
-router.delete('/:id', (req, res) => {
-  // delete one product by its `id` value
-});
-
 module.exports = router;
